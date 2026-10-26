@@ -6,6 +6,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ADB_BIN="${ADB:-adb}"
 HOST="${ADB_HOST:-}"
 EMOTN_APK="${EMOTN_APK:-$SKILL_DIR/assets/emotn-ui.apk}"
+BUNDLED_LAUNCHER_APK="${BUNDLED_LAUNCHER_APK:-$SKILL_DIR/assets/projector-launcher.apk}"
 HOMEFIX_APK="${HOMEFIX_APK:-$SKILL_DIR/assets/homefix.apk}"
 ROOT_DEX="$SKILL_DIR/assets/rootexec.dex"
 REMOTE_DIR="/data/local/tmp/jmgo-emotn"
@@ -18,6 +19,7 @@ Usage: jmgo-emotn.sh <probe|apply|verify|restore> --host HOST [options]
 Options:
   --host HOST          ADB endpoint, for example 192.168.0.24:5555
   --emotn-apk PATH     Owner-supplied EMOTN UI APK
+  --bundled-launcher    Use the original Projector Home bundled with this Skill
   --homefix-apk PATH   Owner-supplied optional HOME fallback APK
   --with-homefix       Install and enable the optional HOME fallback
   --keep-background     Disable H931 BPM cleanup and keep the messenger service available
@@ -33,6 +35,7 @@ while [ "$#" -gt 0 ]; do
     probe|apply|verify|restore) ACTION="$1"; shift ;;
     --host) HOST="${2:-}"; shift 2 ;;
     --emotn-apk) EMOTN_APK="${2:-}"; shift 2 ;;
+    --bundled-launcher) USE_BUNDLED_LAUNCHER=1; shift ;;
     --homefix-apk) HOMEFIX_APK="${2:-}"; shift 2 ;;
     --with-homefix) WITH_HOMEFIX=1; shift ;;
     --keep-background) KEEP_BACKGROUND=1; shift ;;
@@ -49,6 +52,7 @@ REBOOT="${REBOOT:-0}"
 YES="${YES:-0}"
 WITH_HOMEFIX="${WITH_HOMEFIX:-0}"
 KEEP_BACKGROUND="${KEEP_BACKGROUND:-0}"
+USE_BUNDLED_LAUNCHER="${USE_BUNDLED_LAUNCHER:-0}"
 SERIAL="$HOST"
 
 device_adb() { "$ADB_BIN" -s "$SERIAL" "$@"; }
@@ -82,7 +86,8 @@ root_action() {
   action="$1"
   extra="${2:-}"
   extra_two="${3:-}"
-  command="sh $REMOTE_ROOT_SCRIPT $action $extra $extra_two"
+  extra_three="${4:-}"
+  command="sh $REMOTE_ROOT_SCRIPT $action $extra $extra_two $extra_three"
   device_adb shell "CLASSPATH=$REMOTE_DIR/rootexec.dex:$HIPPO_APK app_process /system/bin local.jmgo.diagnostic.RootExec '$command'" 2>&1 | tee /tmp/jmgo-emotn-root.out
   sleep 1
 }
@@ -97,15 +102,33 @@ root_probe() {
 }
 
 install_if_missing() {
-  if ! shell pm path com.oversea.aslauncher >/dev/null 2>&1; then
-    [ -f "$EMOTN_APK" ] || die "EMOTN UI is absent; provide --emotn-apk PATH"
+  if [ "$USE_BUNDLED_LAUNCHER" = 1 ]; then
+    TARGET_PACKAGE="com.codex.projector.launcher"
+    TARGET_ACTIVITY="com.codex.projector.launcher/.MainActivity"
+    if ! shell pm path "$TARGET_PACKAGE" >/dev/null 2>&1; then
+      [ -f "$BUNDLED_LAUNCHER_APK" ] || die "bundled launcher is absent: $BUNDLED_LAUNCHER_APK"
+      device_adb install -r "$BUNDLED_LAUNCHER_APK"
+    fi
+  elif shell pm path com.oversea.aslauncher >/dev/null 2>&1; then
+    TARGET_PACKAGE="com.oversea.aslauncher"
+    TARGET_ACTIVITY="com.oversea.aslauncher/.ui.main.MainActivity"
+  elif [ -f "$EMOTN_APK" ]; then
     device_adb install -r "$EMOTN_APK"
+    TARGET_PACKAGE="com.oversea.aslauncher"
+    TARGET_ACTIVITY="com.oversea.aslauncher/.ui.main.MainActivity"
+  elif [ -f "$BUNDLED_LAUNCHER_APK" ]; then
+    echo "EMOTN UI APK unavailable; falling back to bundled Projector Home"
+    device_adb install -r "$BUNDLED_LAUNCHER_APK"
+    TARGET_PACKAGE="com.codex.projector.launcher"
+    TARGET_ACTIVITY="com.codex.projector.launcher/.MainActivity"
+  else
+    die "no launcher APK available; provide --emotn-apk PATH or use the bundled asset"
   fi
   if [ "$WITH_HOMEFIX" = 1 ] && ! shell pm path local.jmgo.homefix >/dev/null 2>&1; then
     [ -f "$HOMEFIX_APK" ] || die "HomeFix requested but APK is absent: $HOMEFIX_APK"
     device_adb install -r "$HOMEFIX_APK"
   fi
-  shell pm path com.oversea.aslauncher >/dev/null || die "EMOTN UI package is unavailable after install"
+  shell pm path "$TARGET_PACKAGE" >/dev/null || die "launcher package is unavailable after install: $TARGET_PACKAGE"
 }
 
 confirm_change() {
@@ -154,7 +177,7 @@ case "$ACTION" in
     push_root_bridge
     root_probe
     root_action backup
-    root_action apply "$WITH_HOMEFIX" "$KEEP_BACKGROUND"
+    root_action apply "$WITH_HOMEFIX" "$KEEP_BACKGROUND" "$([ "$TARGET_PACKAGE" = com.codex.projector.launcher ] && echo bundled || echo emotn)"
     echo "remote backup: $REMOTE_DIR"
     confirm_reboot
     if [ "$REBOOT" = 1 ]; then

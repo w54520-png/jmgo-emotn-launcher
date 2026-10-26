@@ -4,6 +4,7 @@ set -eu
 ACTION="${1:-}"
 ENABLE_HOMEFIX="${2:-0}"
 KEEP_BACKGROUND="${3:-0}"
+LAUNCHER_MODE="${4:-emotn}"
 BACKUP="/data/local/tmp/jmgo-emotn-backup"
 CFG="/vendor/etc/launcher.cfg"
 KL="/vendor/usr/keylayout/Vendor_1d5a_Product_c081.kl"
@@ -13,6 +14,23 @@ HOME_FILE="$BACKUP/home.component.orig"
 BPM_FILE="$BACKUP/persist.hippo.debug.bpm.orig"
 LAUNCHER_STATE_FILE="$BACKUP/com.jmgo.launcher.state.orig"
 HOMEFIX="local.jmgo.homefix/local.jmgo.homefix.HomeRedirectService"
+
+case "$LAUNCHER_MODE" in
+  bundled)
+    LAUNCHER_PACKAGE="com.codex.projector.launcher"
+    LAUNCHER_ACTIVITY="com.codex.projector.launcher/.MainActivity"
+    PERSIST_HOME="projector"
+    ;;
+  emotn)
+    LAUNCHER_PACKAGE="com.oversea.aslauncher"
+    LAUNCHER_ACTIVITY="com.oversea.aslauncher/.ui.main.MainActivity"
+    PERSIST_HOME="aslauncher"
+    ;;
+  *)
+    echo "unsupported launcher mode: $LAUNCHER_MODE" >&2
+    exit 2
+    ;;
+esac
 
 backup_once() {
   src="$1"
@@ -92,11 +110,11 @@ case "$ACTION" in
     fi
 
     if grep -q '^launcher:' "$CFG"; then
-      sed 's/^launcher:.*/launcher: com.oversea.aslauncher/' "$CFG" > "$CFG.tmp"
+      sed "s/^launcher:.*/launcher: $LAUNCHER_PACKAGE/" "$CFG" > "$CFG.tmp"
       cp "$CFG.tmp" "$CFG"
       rm -f "$CFG.tmp"
     else
-      printf '%s\n' 'launcher: com.oversea.aslauncher' >> "$CFG"
+      printf 'launcher: %s\n' "$LAUNCHER_PACKAGE" >> "$CFG"
     fi
 
     if [ -e "$KL" ]; then
@@ -127,8 +145,8 @@ case "$ACTION" in
       hippo_pid="$(pidof com.jmgo.hippo || true)"
       [ -z "$hippo_pid" ] || kill -9 $hippo_pid || true
     fi
-    cmd package set-home-activity com.oversea.aslauncher/.ui.main.MainActivity 2>/dev/null || true
-    setprop persist.jmgo.home aslauncher
+    cmd package set-home-activity "$LAUNCHER_ACTIVITY" 2>/dev/null || true
+    setprop persist.jmgo.home "$PERSIST_HOME"
     ;;
   restore)
     [ -e "$BACKUP/launcher.cfg.orig" ] && cp "$BACKUP/launcher.cfg.orig" "$CFG"
