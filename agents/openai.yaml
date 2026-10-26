@@ -1,0 +1,4 @@
+interface:
+  display_name: "JMGO EMOTN Launcher"
+  short_description: "Replace JMGO H931 home with EMOTN UI"
+  default_prompt: "Use $jmgo-emotn-launcher to replace a supported JMGO projector desktop with EMOTN UI over ADB."
