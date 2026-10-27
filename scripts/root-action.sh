@@ -14,8 +14,14 @@ HOME_FILE="$BACKUP/home.component.orig"
 BPM_FILE="$BACKUP/persist.hippo.debug.bpm.orig"
 LAUNCHER_STATE_FILE="$BACKUP/com.jmgo.launcher.state.orig"
 HOMEFIX="local.jmgo.homefix/local.jmgo.homefix.HomeRedirectService"
+AERIAL_HOME_GUARD="app.orchard.tv/app.orchard.tv.guard.HomeGuardService"
 
 case "$LAUNCHER_MODE" in
+  aerial)
+    LAUNCHER_PACKAGE="app.orchard.tv"
+    LAUNCHER_ACTIVITY="app.orchard.tv/.MainActivity"
+    PERSIST_HOME="aerial"
+    ;;
   bundled)
     LAUNCHER_PACKAGE="com.codex.projector.launcher"
     LAUNCHER_ACTIVITY="com.codex.projector.launcher/.MainActivity"
@@ -109,12 +115,17 @@ case "$ACTION" in
       chmod 644 "$LAUNCHER_STATE_FILE"
     fi
 
-    if grep -q '^launcher:' "$CFG"; then
-      sed "s/^launcher:.*/launcher: $LAUNCHER_PACKAGE/" "$CFG" > "$CFG.tmp"
-      cp "$CFG.tmp" "$CFG"
-      rm -f "$CFG.tmp"
+    mount -o remount,rw /vendor 2>/dev/null || true
+    if [ -w "$CFG" ]; then
+      if grep -q '^launcher:' "$CFG"; then
+        sed "s/^launcher:.*/launcher: $LAUNCHER_PACKAGE/" "$CFG" > "$CFG.tmp"
+        cp "$CFG.tmp" "$CFG"
+        rm -f "$CFG.tmp"
+      else
+        printf 'launcher: %s\n' "$LAUNCHER_PACKAGE" >> "$CFG"
+      fi
     else
-      printf 'launcher: %s\n' "$LAUNCHER_PACKAGE" >> "$CFG"
+      echo "launcher config is read-only; Android HOME preference will still be applied"
     fi
 
     if [ -e "$KL" ]; then
@@ -141,6 +152,21 @@ case "$ACTION" in
           updated="$HOMEFIX"
         fi
         sed -i "s|name=\"enabled_accessibility_services\" value=\"[^\"]*\"|name=\"enabled_accessibility_services\" value=\"$updated\"|" "$SECURE"
+        homefix_settings_changed=1
+      fi
+    fi
+    if [ "$LAUNCHER_MODE" = aerial ] && [ -e "$SECURE" ] && ! grep -q "$AERIAL_HOME_GUARD" "$SECURE"; then
+      current="$(grep -o 'name="enabled_accessibility_services" value="[^"]*"' "$SECURE" | sed 's/.*value="//; s/"$//' | head -1)"
+      if [ -n "$current" ]; then
+        updated="$current:$AERIAL_HOME_GUARD"
+      else
+        updated="$AERIAL_HOME_GUARD"
+      fi
+      if grep -q 'name="enabled_accessibility_services"' "$SECURE"; then
+        secure_tmp="$BACKUP/settings_secure.xml.aerial.tmp"
+        sed "s|name=\"enabled_accessibility_services\" value=\"[^\"]*\"|name=\"enabled_accessibility_services\" value=\"$updated\"|" "$SECURE" > "$secure_tmp"
+        cp "$secure_tmp" "$SECURE"
+        rm -f "$secure_tmp"
         homefix_settings_changed=1
       fi
     fi

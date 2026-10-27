@@ -20,6 +20,7 @@ Options:
   --host HOST          ADB endpoint, for example 192.168.0.24:5555
   --emotn-apk PATH     Owner-supplied EMOTN UI APK
   --bundled-launcher    Use the original Projector Home bundled with this Skill
+  --aerial              Use the installed Aerial TV launcher
   --homefix-apk PATH   Owner-supplied optional HOME fallback APK
   --with-homefix       Install and enable the optional HOME fallback
   --keep-background     Disable H931 BPM cleanup and keep the messenger service available
@@ -36,6 +37,7 @@ while [ "$#" -gt 0 ]; do
     --host) HOST="${2:-}"; shift 2 ;;
     --emotn-apk) EMOTN_APK="${2:-}"; shift 2 ;;
     --bundled-launcher) USE_BUNDLED_LAUNCHER=1; shift ;;
+    --aerial) USE_AERIAL=1; shift ;;
     --homefix-apk) HOMEFIX_APK="${2:-}"; shift 2 ;;
     --with-homefix) WITH_HOMEFIX=1; shift ;;
     --keep-background) KEEP_BACKGROUND=1; shift ;;
@@ -53,6 +55,7 @@ YES="${YES:-0}"
 WITH_HOMEFIX="${WITH_HOMEFIX:-0}"
 KEEP_BACKGROUND="${KEEP_BACKGROUND:-0}"
 USE_BUNDLED_LAUNCHER="${USE_BUNDLED_LAUNCHER:-0}"
+USE_AERIAL="${USE_AERIAL:-0}"
 SERIAL="$HOST"
 
 device_adb() { "$ADB_BIN" -s "$SERIAL" "$@"; }
@@ -102,9 +105,15 @@ root_probe() {
 }
 
 install_if_missing() {
-  if [ "$USE_BUNDLED_LAUNCHER" = 1 ]; then
+  if [ "$USE_AERIAL" = 1 ]; then
+    TARGET_PACKAGE="app.orchard.tv"
+    TARGET_ACTIVITY="app.orchard.tv/.MainActivity"
+    LAUNCHER_MODE="aerial"
+    shell pm path "$TARGET_PACKAGE" >/dev/null 2>&1 || die "Aerial TV is not installed: $TARGET_PACKAGE"
+  elif [ "$USE_BUNDLED_LAUNCHER" = 1 ]; then
     TARGET_PACKAGE="com.codex.projector.launcher"
     TARGET_ACTIVITY="com.codex.projector.launcher/.MainActivity"
+    LAUNCHER_MODE="bundled"
     if ! shell pm path "$TARGET_PACKAGE" >/dev/null 2>&1; then
       [ -f "$BUNDLED_LAUNCHER_APK" ] || die "bundled launcher is absent: $BUNDLED_LAUNCHER_APK"
       device_adb install -r "$BUNDLED_LAUNCHER_APK"
@@ -112,15 +121,18 @@ install_if_missing() {
   elif shell pm path com.oversea.aslauncher >/dev/null 2>&1; then
     TARGET_PACKAGE="com.oversea.aslauncher"
     TARGET_ACTIVITY="com.oversea.aslauncher/.ui.main.MainActivity"
+    LAUNCHER_MODE="emotn"
   elif [ -f "$EMOTN_APK" ]; then
     device_adb install -r "$EMOTN_APK"
     TARGET_PACKAGE="com.oversea.aslauncher"
     TARGET_ACTIVITY="com.oversea.aslauncher/.ui.main.MainActivity"
+    LAUNCHER_MODE="emotn"
   elif [ -f "$BUNDLED_LAUNCHER_APK" ]; then
     echo "EMOTN UI APK unavailable; falling back to bundled Projector Home"
     device_adb install -r "$BUNDLED_LAUNCHER_APK"
     TARGET_PACKAGE="com.codex.projector.launcher"
     TARGET_ACTIVITY="com.codex.projector.launcher/.MainActivity"
+    LAUNCHER_MODE="bundled"
   else
     die "no launcher APK available; provide --emotn-apk PATH or use the bundled asset"
   fi
@@ -129,6 +141,25 @@ install_if_missing() {
     device_adb install -r "$HOMEFIX_APK"
   fi
   shell pm path "$TARGET_PACKAGE" >/dev/null || die "launcher package is unavailable after install: $TARGET_PACKAGE"
+}
+
+configure_aerial() {
+  [ "$USE_AERIAL" = 1 ] || return
+  shell pm grant app.orchard.tv android.permission.WRITE_SECURE_SETTINGS 2>/dev/null || true
+  shell cmd notification allow_listener app.orchard.tv/app.orchard.tv.guard.RevivalListener 2>/dev/null || true
+  services="$(shell settings get secure enabled_accessibility_services 2>/dev/null || true)"
+  case ":$services:" in
+    *":app.orchard.tv/app.orchard.tv.guard.HomeGuardService:"*) ;;
+    *)
+      if [ -n "$services" ] && [ "$services" != null ]; then
+        services="$services:app.orchard.tv/app.orchard.tv.guard.HomeGuardService"
+      else
+        services="app.orchard.tv/app.orchard.tv.guard.HomeGuardService"
+      fi
+      shell settings put secure enabled_accessibility_services "$services" 2>/dev/null || true
+      ;;
+  esac
+  shell settings put secure accessibility_enabled 1 2>/dev/null || true
 }
 
 confirm_change() {
@@ -182,10 +213,11 @@ case "$ACTION" in
   apply)
     confirm_change
     install_if_missing
+    configure_aerial
     push_root_bridge
     root_probe
     root_action backup
-    root_action apply "$WITH_HOMEFIX" "$KEEP_BACKGROUND" "$([ "$TARGET_PACKAGE" = com.codex.projector.launcher ] && echo bundled || echo emotn)"
+    root_action apply "$WITH_HOMEFIX" "$KEEP_BACKGROUND" "$LAUNCHER_MODE"
     echo "remote backup: $REMOTE_DIR"
     confirm_reboot
     if [ "$REBOOT" = 1 ]; then
