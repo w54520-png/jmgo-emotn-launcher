@@ -10,7 +10,7 @@ The durable routing change is to keep the vendor hook alive but change its launc
 launcher: com.oversea.aslauncher
 ```
 
-The runtime property `persist.jmgo.home=aslauncher` helps the current session but may be rewritten to `launcher` or `arwen` during boot. The vendor configuration and Android's final HOME choice are the persistence sources.
+The runtime property `persist.jmgo.home=aslauncher` helps the current session, but is not a durable source of truth: a shell-level write is corrected back to `arwen`, and even a root write can be rewritten by firmware during a later boot. The helper therefore writes it only through the Hippo `rootexec.dex` bridge, reasserts it through that bridge after an `--reboot` apply, and reports the observed value in `verify`. Treat a post-boot value of `arwen` as a persistence-risk signal, not as evidence that the vendor configuration was changed back. `/vendor/etc/launcher.cfg` and Android's final HOME choice remain the persistence sources.
 
 The helper also calls `cmd package set-home-activity` for the verified EMOTN activity and backs up the previous resolved HOME component. If Android still presents a chooser, select **EMOTN UI** and **Always** once; later boots should use the saved preferred component.
 
@@ -39,4 +39,8 @@ Do not map `195` based only on the MSC scan tag.
 
 ## Protected components
 
-Keep the optics, remote, input, and update components enabled. In particular, do not disable `com.jmgo.arwen` merely because it is the stock home: the vendor hook and fallback path depend on it. Do not disable `com.jmgo.hippo`, autofocus/keystone services, `com.jmgo.update`, `com.jmgo.remotecontrolota`, or any `com.mediatek.*` package in this launcher skill.
+Keep the optics, remote, input, and update components enabled. In particular, do not disable `com.jmgo.arwen` merely because it is the stock home: `startHomeHook` matches candidate packages with `pkg.contains(persist.jmgo.home)`. If that property is `arwen` while Arwen is disabled, HOME matches a package which cannot launch and the key becomes unusable. With `persist.jmgo.home=aslauncher` and Arwen left enabled, the matching EMOTN candidate launches normally. Do not disable `com.jmgo.hippo`, autofocus/keystone services, `com.jmgo.update`, `com.jmgo.remotecontrolota`, or any `com.mediatek.*` package in this launcher skill.
+
+## USB controller investigation (unresolved)
+
+The controller identifies as USB `1d5a:c081` (JMGO Controller). On one reboot the entire bus 5 disappeared; repeatedly restoring/enabling Arwen and rebooting did not restore that bus, although framework input still reported `scanCode=264`. Do not infer controller USB health from `0e8d:7961` on bus 3: that is the Bluetooth/Wi-Fi chipset, not the remote. The non-invasive evidence to collect is `/sys/bus/usb/devices/` and `dmesg | grep -i usb`.

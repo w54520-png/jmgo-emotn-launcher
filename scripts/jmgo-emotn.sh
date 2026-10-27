@@ -158,7 +158,15 @@ verify() {
   echo "focused window:"
   shell dumpsys window | grep -m 2 -E 'mCurrentFocus|mFocusedApp' || true
   echo "accessibility:"
-  shell dumpsys accessibility | grep -m 3 -A 2 -B 2 'local.jmgo.homefix' || true
+  accessibility_dump="$(shell dumpsys accessibility)"
+  printf '%s\n' "$accessibility_dump" | grep -E 'Bound services:|Crashed services:|local\.jmgo\.homefix' || true
+  if printf '%s\n' "$accessibility_dump" | grep -q 'Crashed services:.*local.jmgo.homefix'; then
+    echo "homefix_status=crashed"
+  elif printf '%s\n' "$accessibility_dump" | grep -q 'Bound services:.*local.jmgo.homefix'; then
+    echo "homefix_status=bound"
+  else
+    echo "homefix_status=not-listed"
+  fi
 }
 
 connect
@@ -189,6 +197,7 @@ case "$ACTION" in
         [ "$state" = device ] && break
       done
       connect
+      root_action set-persist 0 0 "$([ "$TARGET_PACKAGE" = com.codex.projector.launcher ] && echo bundled || echo emotn)"
     fi
     verify
     ;;

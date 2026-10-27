@@ -131,12 +131,17 @@ case "$ACTION" in
       pm grant local.jmgo.homefix android.permission.WRITE_SECURE_SETTINGS 2>/dev/null || true
       if [ -e "$SECURE" ] && ! grep -q "$HOMEFIX" "$SECURE"; then
         current="$(grep -o 'name="enabled_accessibility_services" value="[^"]*"' "$SECURE" | sed 's/.*value="//; s/"$//' | head -1)"
+        grep -q 'name="enabled_accessibility_services"' "$SECURE" || {
+          echo "enabled_accessibility_services is absent from $SECURE" >&2
+          exit 22
+        }
         if [ -n "$current" ]; then
           updated="$current:$HOMEFIX"
         else
           updated="$HOMEFIX"
         fi
         sed -i "s|name=\"enabled_accessibility_services\" value=\"[^\"]*\"|name=\"enabled_accessibility_services\" value=\"$updated\"|" "$SECURE"
+        homefix_settings_changed=1
       fi
     fi
     if [ "$KEEP_BACKGROUND" = 1 ]; then
@@ -146,6 +151,18 @@ case "$ACTION" in
       [ -z "$hippo_pid" ] || kill -9 $hippo_pid || true
     fi
     cmd package set-home-activity "$LAUNCHER_ACTIVITY" 2>/dev/null || true
+    setprop persist.jmgo.home "$PERSIST_HOME"
+    if [ "${homefix_settings_changed:-0}" = 1 ]; then
+      sync
+      system_server_pid="$(pidof system_server || true)"
+      [ -n "$system_server_pid" ] || {
+        echo "system_server is not running; cannot reload accessibility settings" >&2
+        exit 23
+      }
+      kill -9 $system_server_pid
+    fi
+    ;;
+  set-persist)
     setprop persist.jmgo.home "$PERSIST_HOME"
     ;;
   restore)
